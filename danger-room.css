@@ -1,0 +1,89 @@
+.danger-room-config .dr-intro {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-left: 4px solid var(--color-border-highlight, #9f0000);
+  background: rgba(100, 0, 0, 0.08);
+}
+
+.danger-room-config .dr-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr);
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.4rem 0;
+}
+
+.danger-room-config .dr-enemy-table {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.danger-room-config .dr-enemy-table th,
+.danger-room-config .dr-enemy-table td {
+  padding: 0.35rem 0.4rem;
+  vertical-align: middle;
+}
+
+.danger-room-config .dr-enemy-table select {
+  width: 100%;
+}
+
+.danger-room-config .dr-muted {
+  opacity: 0.72;
+  font-size: 0.9em;
+}
+
+.danger-room-scoreboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.danger-room-scoreboard .dr-stat {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border-light-2, #777);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.danger-room-scoreboard .dr-stat strong {
+  display: block;
+  font-size: 1.35rem;
+  margin-top: 0.2rem;
+}
+
+#danger-room-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.35);
+  animation: danger-room-fade 4s ease forwards;
+}
+
+#danger-room-overlay .dr-overlay-panel {
+  min-width: min(540px, 80vw);
+  padding: 1.35rem 2rem;
+  border: 2px solid #b91c1c;
+  background: rgba(12, 12, 14, 0.95);
+  color: #f5f5f5;
+  text-align: center;
+  box-shadow: 0 0 30px rgba(185, 28, 28, 0.6);
+}
+
+#danger-room-overlay .dr-overlay-panel h1 {
+  margin: 0 0 0.45rem;
+  letter-spacing: 0.08em;
+}
+
+#danger-room-overlay .dr-overlay-panel p {
+  margin: 0.2rem 0;
+}
+
+@keyframes danger-room-fade {
+  0%, 72% { opacity: 1; }
+  100% { opacity: 0; }
+}

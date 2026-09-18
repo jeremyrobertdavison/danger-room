@@ -1,0 +1,29 @@
+name: Build Foundry Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build module zip
+        shell: bash
+        run: |
+          zip -r "danger-room-${GITHUB_REF_NAME}.zip" \
+            module.json README.md CHANGELOG.md LICENSE \
+            scripts styles
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: danger-room-${{ github.ref_name }}.zip
+          generate_release_notes: true
