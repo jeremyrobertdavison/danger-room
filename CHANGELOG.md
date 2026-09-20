@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5
+
+- Fixed a race where a training enemy could reach 0 Health but the victory/knockout check could be skipped while turn processing was active.
+- Player-inflicted damage now performs an immediate simulation outcome check after the damage is applied.
+- Outcome checks now retry instead of being discarded when NPC turn automation is temporarily busy.
+- Training enemies that reach 0 Health are immediately marked defeated and hidden, while their Token documents remain available for automatic reset.
+- Enemy knockout IDs are persisted immediately so scoreboard totals remain correct even when the final enemy ends the simulation.
+
 ## 1.0.4
 
 - Fixed MVRPG enemy hits not reducing hero Health/Focus by moving Danger Room damage resolution onto the prepared attacker/target Actor data used by the installed `mvrpg` system.

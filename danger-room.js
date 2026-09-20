@@ -28,7 +28,7 @@ const DEFAULT_SCORE = Object.freeze({
 });
 
 Hooks.once("init", () => {
-  console.log("Danger Room | Initializing v1.0.4");
+  console.log("Danger Room | Initializing v1.0.5");
 });
 
 Hooks.once("ready", () => {
@@ -521,15 +521,23 @@ function scheduleTurnProcessing(delay = 200) {
   runtime.turnTimer = setTimeout(() => processCurrentTurn(), delay);
 }
 
-function scheduleOutcomeCheck() {
-  if (!isAutomationGM() || runtime.resetting || runtime.processing) return;
+function scheduleOutcomeCheck(delay = 100) {
+  if (!isAutomationGM() || runtime.resetting) return;
   clearTimeout(runtime.outcomeTimer);
   runtime.outcomeTimer = setTimeout(async () => {
-    if (runtime.processing || runtime.resetting) return;
+    if (runtime.resetting) return;
+
+    // Never silently lose an outcome check just because an NPC turn happens to
+    // be processing at the same moment. Retry as soon as turn processing clears.
+    if (runtime.processing) {
+      scheduleOutcomeCheck(100);
+      return;
+    }
+
     const scene = canvas.scene;
     if (!scene?.getFlag(MODULE_ID, FLAG_ACTIVE)) return;
     await checkOutcome(scene);
-  }, 175);
+  }, delay);
 }
 
 async function processCurrentTurn() {
@@ -911,8 +919,21 @@ async function applyMvrpgDamage({ roll, attackerToken, targetToken, combat, life
   }
 
   const targetCombatant = combat?.combatants?.find((entry) => entry.tokenId === targetToken.id);
-  if (pool === "health" && after <= 0 && targetCombatant && !targetCombatant.defeated) {
-    await targetCombatant.update({ defeated: true });
+  if (pool === "health" && after <= 0) {
+    if (targetCombatant && !targetCombatant.defeated) {
+      await targetCombatant.update({ defeated: true });
+    }
+
+    // A Danger Room opponent that reaches 0 Health is out of the simulation.
+    // Hide the hologram immediately, but keep the Token document so it can be
+    // restored to its captured spawn point when the room resets.
+    const scene = targetToken.parent;
+    const active = scene?.getFlag(MODULE_ID, FLAG_ACTIVE);
+    if (active?.enemyTokenIds?.includes(targetToken.id)) {
+      const enemyKOIds = Array.from(new Set([...(active.enemyKOIds ?? []), targetToken.id]));
+      await scene.setFlag(MODULE_ID, FLAG_ACTIVE, { ...active, enemyKOIds });
+      if (!targetToken.hidden) await targetToken.update({ hidden: true });
+    }
   }
 
   scheduleOutcomeCheck();
@@ -1039,6 +1060,10 @@ async function maybeApplyPlayerAttackDamage(message) {
       flags: { [MODULE_ID]: { automatedResult: true } },
       content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} deals <strong>${damage.amount}</strong> ${lifepoolTarget} damage to <strong>${esc(targetToken.name)}</strong>. ${esc(targetToken.name)}: ${damage.before} → ${damage.after}.`,
     });
+
+    // Player attacks do not advance combat themselves, so resolve victory/defeat
+    // immediately instead of relying only on document-update hooks.
+    await checkOutcome(scene);
   } catch (error) {
     console.error("Danger Room | Failed to apply player damage", error, { message, attackerToken, targetToken });
     ui.notifications.error(`Danger Room could not apply player damage: ${error.message}`);

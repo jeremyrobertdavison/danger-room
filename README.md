@@ -6,7 +6,7 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 
 > This is a fan-made module. It is not affiliated with or endorsed by Marvel Entertainment, The Walt Disney Company, Foundry Gaming LLC, or the maintainers of the unofficial Marvel Multiverse Foundry system. No copyrighted game rules or sourcebook content are distributed with this module.
 
-## Version 1.0.4 Features
+## Version 1.0.5 Features
 
 - Danger Room is enabled **per Scene**.
 - GM manually starts and stops each simulation.
@@ -19,6 +19,7 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 - Enemies attack when they reach their configured close-attack reach.
 - Enemy attacks use the active Marvel-compatible system's D616 mechanics; `mvrpg` v3.x data paths are supported.
 - Danger Room automatically checks the attack against the target defense and applies Health or Focus damage.
+- Training enemies that reach 0 Health are immediately marked defeated and de-materialize from the Scene.
 - Successful player combat attacks automatically damage a targeted Danger Room enemy while a simulation is active.
 - Players should target exactly one training enemy before rolling an attack; if only one conscious enemy remains, Danger Room can infer that target.
 - Enemy turns end automatically and initiative proceeds normally.
@@ -43,7 +44,7 @@ In Foundry's **Add-on Modules** setup screen, choose **Install Module** and use:
 
 ### Manual Installation
 
-Download `danger-room-v1.0.4.zip` from the GitHub Releases page and extract it into:
+Download `danger-room-v1.0.5.zip` from the GitHub Releases page and extract it into:
 
 `Data/modules/danger-room/`
 
