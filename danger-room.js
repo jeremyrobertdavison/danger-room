@@ -28,7 +28,7 @@ const DEFAULT_SCORE = Object.freeze({
 });
 
 Hooks.once("init", () => {
-  console.log("Danger Room | Initializing v1.0.0");
+  console.log("Danger Room | Initializing v1.0.1");
 });
 
 Hooks.once("ready", () => {
@@ -46,6 +46,7 @@ Hooks.once("ready", () => {
 
 Hooks.on("getSceneControlButtons", (controls) => {
   if (!game.user.isGM) return;
+  if (game.system?.id !== "marvel-multiverse") return;
   const tokenControl = controls?.tokens;
   if (!tokenControl?.tools) return;
 

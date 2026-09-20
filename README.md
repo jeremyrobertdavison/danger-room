@@ -6,7 +6,7 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 
 > This is a fan-made module. It is not affiliated with or endorsed by Marvel Entertainment, The Walt Disney Company, Foundry Gaming LLC, or the maintainers of the unofficial Marvel Multiverse Foundry system. No copyrighted game rules or sourcebook content are distributed with this module.
 
-## Version 1.0.0 Features
+## Version 1.0.1 Features
 
 - Danger Room is enabled **per Scene**.
 - GM manually starts and stops each simulation.
@@ -40,7 +40,7 @@ In Foundry's **Add-on Modules** setup screen, choose **Install Module** and use:
 
 ### Manual Installation
 
-Download `danger-room-v1.0.0.zip` from the GitHub Releases page and extract it into:
+Download `danger-room-v1.0.1.zip` from the GitHub Releases page and extract it into:
 
 `Data/modules/danger-room/`
 

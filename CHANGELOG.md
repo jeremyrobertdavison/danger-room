@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Removed the unnecessary Marvel Multiverse package relationship from `module.json` so Foundry 13 consistently lists Danger Room in world Module Management.
+- Added a runtime system guard for the Danger Room scene controls.
+
 ## 1.0.0
 
 Initial public release.
