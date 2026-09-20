@@ -6,17 +6,18 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 
 > This is a fan-made module. It is not affiliated with or endorsed by Marvel Entertainment, The Walt Disney Company, Foundry Gaming LLC, or the maintainers of the unofficial Marvel Multiverse Foundry system. No copyrighted game rules or sourcebook content are distributed with this module.
 
-## Version 1.0.1 Features
+## Version 1.0.2 Features
 
 - Danger Room is enabled **per Scene**.
 - GM manually starts and stops each simulation.
 - Enemy tokens are captured at their placed locations and hidden until the simulation begins.
 - Each enemy is assigned one attack to use for the entire simulation.
+- `mvrpg` enemies always have a built-in **Basic Melee Attack** option, even when they have no attack Power item.
 - Enemies automatically target the nearest conscious player character.
 - Equal-distance ties are resolved randomly.
 - Enemies use their Run movement to travel directly toward their target.
 - Enemies attack when they reach their configured close-attack reach.
-- Enemy attacks use the Marvel Multiverse system's native attack roll.
+- Enemy attacks use the active Marvel-compatible system's D616 mechanics; `mvrpg` v3.x data paths are supported.
 - Danger Room automatically checks the attack against the target defense and applies Health or Focus damage.
 - Enemy turns end automatically and initiative proceeds normally.
 - If every participating hero reaches 0 Health or below, the simulation ends and heroes are restored to full Health.
@@ -27,7 +28,7 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 ## Requirements
 
 - Foundry Virtual Tabletop **v13** (verified against the v13 API family)
-- The unofficial `marvel-multiverse` Foundry game system
+- The `mvrpg` (Comic Book RPG) Foundry game system. Legacy `marvel-multiverse` support remains best-effort.
 - A connected GM client while the simulation is running
 
 ## Installation
@@ -40,7 +41,7 @@ In Foundry's **Add-on Modules** setup screen, choose **Install Module** and use:
 
 ### Manual Installation
 
-Download `danger-room-v1.0.1.zip` from the GitHub Releases page and extract it into:
+Download `danger-room-v1.0.2.zip` from the GitHub Releases page and extract it into:
 
 `Data/modules/danger-room/`
 
@@ -57,7 +58,7 @@ Then restart Foundry and enable **Danger Room** in the desired world.
 7. Re-opened configuration will list each captured enemy. Choose the single close attack that enemy should use.
 8. Check **Enable Danger Room on this Scene** and click **Save**.
 9. Captured enemy tokens are hidden while the room is idle.
-10. Place the players' normal character tokens on the Scene. Participating heroes are active, non-GM player-owned Actors of type `character`.
+10. Place the players' normal character tokens on the Scene. Participating heroes are tokens owned by active, non-GM players. This supports `mvrpg` Actors such as `super`.
 11. Click **Danger Room: Start Simulation**.
 
 Danger Room reveals the training enemies, resets them, creates combatants, rolls initiative for everyone, and begins combat.
@@ -144,11 +145,11 @@ No timeline is promised for any planned feature.
 
 ### No heroes are found
 
-Danger Room only includes `character` tokens owned by **active non-GM users**. Confirm the player is connected and has Owner permission for the Actor represented by the token.
+Danger Room includes tokens owned by **active non-GM users**. Confirm the player is connected and has Owner permission for the Actor represented by the token.
 
 ### An enemy has no selectable attack
 
-The Marvel Multiverse Item must be configured as an attack. Version 1 prefers close attacks. Review the attack on the enemy Actor sheet and then reopen Danger Room configuration.
+In `mvrpg`, Danger Room always offers **Basic Melee Attack** even if the Actor has no rollable power. It also lists close combat Power items whose roll data targets Health or Focus.
 
 ### Several enemies lose Health at the same time
 

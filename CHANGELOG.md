@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+
+- Fixed Scene Controls not appearing in worlds using the `mvrpg` system ID.
+- Added native `mvrpg` v3.x actor paths for Health, Focus, Run speed, and player-owned `super` Actors.
+- Added a universal **Basic Melee Attack** option for every configured enemy.
+- Added `mvrpg` D616 automated attack resolution, defense targeting, damage calculation, and Health/Focus application.
+- Preserved best-effort compatibility with the older `marvel-multiverse` system adapter.
+
+
 ## 1.0.1
 
 - Removed the unnecessary Marvel Multiverse package relationship from `module.json` so Foundry 13 consistently lists Danger Room in world Module Management.

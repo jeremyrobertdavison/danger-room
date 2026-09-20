@@ -28,7 +28,7 @@ const DEFAULT_SCORE = Object.freeze({
 });
 
 Hooks.once("init", () => {
-  console.log("Danger Room | Initializing v1.0.1");
+  console.log("Danger Room | Initializing v1.0.2");
 });
 
 Hooks.once("ready", () => {
@@ -46,7 +46,7 @@ Hooks.once("ready", () => {
 
 Hooks.on("getSceneControlButtons", (controls) => {
   if (!game.user.isGM) return;
-  if (game.system?.id !== "marvel-multiverse") return;
+  if (!["mvrpg", "marvel-multiverse"].includes(game.system?.id)) return;
   const tokenControl = controls?.tokens;
   if (!tokenControl?.tools) return;
 
@@ -157,15 +157,26 @@ function tokenActor(tokenDoc) {
 }
 
 function healthValue(tokenDoc) {
-  return Number(tokenActor(tokenDoc)?.system?.health?.value ?? 0);
+  const system = tokenActor(tokenDoc)?.system;
+  return Number(system?.lifepool?.health?.value ?? system?.health?.value ?? 0);
 }
 
 function healthMax(tokenDoc) {
-  return Number(tokenActor(tokenDoc)?.system?.health?.max ?? 0);
+  const system = tokenActor(tokenDoc)?.system;
+  return Number(system?.lifepool?.health?.max ?? system?.health?.max ?? 0);
 }
 
 function focusMax(tokenDoc) {
-  return Number(tokenActor(tokenDoc)?.system?.focus?.max ?? 0);
+  const system = tokenActor(tokenDoc)?.system;
+  return Number(system?.lifepool?.focus?.max ?? system?.focus?.max ?? 0);
+}
+
+function healthPath(actor) {
+  return actor?.system?.lifepool?.health ? "system.lifepool.health.value" : "system.health.value";
+}
+
+function focusPath(actor) {
+  return actor?.system?.lifepool?.focus ? "system.lifepool.focus.value" : "system.focus.value";
 }
 
 function isConscious(tokenDoc) {
@@ -186,13 +197,30 @@ function participantTokens(scene, enemyIds = []) {
   const enemySet = new Set(enemyIds);
   return scene.tokens.filter((token) => {
     if (!token.actor || enemySet.has(token.id)) return false;
-    if (token.actor.type !== "character") return false;
     return activePlayerOwners(token.actor).length > 0;
   });
 }
 
+function isMvrpg() {
+  return game.system?.id === "mvrpg";
+}
+
 function closeAttacks(actor) {
   if (!actor) return [];
+
+  if (isMvrpg()) {
+    const attacks = actor.items.filter((item) => {
+      const roll = item.system?.roll;
+      return roll?.hasRoll === true && roll?.type === "combat" && roll?.lifepoolTarget !== "none";
+    });
+    const close = attacks.filter((item) => {
+      const range = item.system?.range;
+      const raw = String(range?._value ?? range?.value ?? "").trim();
+      return !raw || range?.reach === true;
+    });
+    return close.length ? close : attacks;
+  }
+
   const attacks = actor.items.filter((item) => item.system?.attack === true);
   const close = attacks.filter((item) => {
     const attackKind = String(item.system?.attackKind ?? item.system?.kind ?? "").toLowerCase();
@@ -200,6 +228,12 @@ function closeAttacks(actor) {
     return attackKind === "close" || range.includes("reach");
   });
   return close.length ? close : attacks;
+}
+
+function attackChoices(actor) {
+  const choices = [{ id: "__basic-melee__", name: "Basic Melee Attack", basic: true }];
+  for (const item of closeAttacks(actor)) choices.push({ id: item.id, name: item.name, item });
+  return choices;
 }
 
 async function openConfig(scene) {
@@ -210,10 +244,8 @@ async function openConfig(scene) {
   const rows = config.enemies.map((entry) => {
     const token = scene.tokens.get(entry.tokenId);
     const actor = token?.actor ?? game.actors.get(entry.actorId);
-    const attacks = closeAttacks(actor);
-    const options = attacks.length
-      ? attacks.map((item) => `<option value="${item.id}" ${item.id === entry.attackId ? "selected" : ""}>${esc(item.name)}</option>`).join("")
-      : `<option value="">No attack items found</option>`;
+    const attacks = attackChoices(actor);
+    const options = attacks.map((choice) => `<option value="${choice.id}" ${choice.id === entry.attackId ? "selected" : ""}>${esc(choice.name)}</option>`).join("");
 
     return `
       <tr>
@@ -233,7 +265,7 @@ async function openConfig(scene) {
         <label for="dr-enabled"><strong>Enable Danger Room on this Scene</strong></label>
         <input id="dr-enabled" name="enabled" type="checkbox" ${config.enabled ? "checked" : ""}>
       </div>
-      <p class="dr-muted">Participants are active, player-owned <strong>character</strong> tokens on this Scene. Enemies use only the selected close attack and always pursue the nearest conscious hero.</p>
+      <p class="dr-muted">Participants are tokens owned by active non-GM players. Enemies use only the selected close attack and always pursue the nearest conscious hero. <strong>Basic Melee Attack</strong> is available for every enemy.</p>
       <table class="dr-enemy-table">
         <thead><tr><th>Token</th><th>Actor</th><th>Attack</th><th>Spawn X/Y</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="4"><em>No enemies captured yet.</em></td></tr>`}</tbody>
@@ -291,13 +323,14 @@ async function captureSelectedEnemies(scene) {
   const byId = new Map(config.enemies.map((entry) => [entry.tokenId, entry]));
 
   for (const token of selected) {
-    const attacks = closeAttacks(token.actor);
+    const attacks = attackChoices(token.actor);
     const old = byId.get(token.id);
+    const oldStillValid = old?.attackId === "__basic-melee__" || token.actor?.items.get(old?.attackId);
     byId.set(token.id, {
       tokenId: token.id,
       actorId: token.actor?.id ?? token.actorId,
       name: token.name,
-      attackId: old?.attackId && token.actor?.items.get(old.attackId) ? old.attackId : (attacks[0]?.id ?? ""),
+      attackId: oldStillValid ? old.attackId : (attacks[0]?.id ?? "__basic-melee__"),
       spawn: {
         x: token.x,
         y: token.y,
@@ -312,12 +345,7 @@ async function captureSelectedEnemies(scene) {
   await scene.updateEmbeddedDocuments("Token", selected.map((token) => ({ _id: token.id, hidden: true })));
   canvas.tokens.releaseAll();
 
-  const withoutAttack = selected.filter((token) => closeAttacks(token.actor).length === 0);
-  if (withoutAttack.length) {
-    ui.notifications.warn(`${withoutAttack.length} captured enemy token(s) have no attack item flagged as an attack.`);
-  } else {
-    ui.notifications.info(`Captured ${selected.length} enemy token(s) for Danger Room.`);
-  }
+  ui.notifications.info(`Captured ${selected.length} enemy token(s) for Danger Room.`);
 }
 
 async function clearCapturedEnemies(scene) {
@@ -353,12 +381,12 @@ async function startSimulation(scene) {
 
   for (const entry of config.enemies) {
     const token = scene.tokens.get(entry.tokenId);
-    const attack = token?.actor?.items.get(entry.attackId);
+    const attack = entry.attackId === "__basic-melee__" ? { basic: true } : token?.actor?.items.get(entry.attackId);
     if (!attack) return ui.notifications.error(`${token?.name ?? entry.name} is missing its configured attack. Open Danger Room: Configure.`);
   }
 
   const heroes = participantTokens(scene, enemies.map((token) => token.id));
-  if (!heroes.length) return ui.notifications.warn("No active player-owned character tokens were found on this Scene.");
+  if (!heroes.length) return ui.notifications.warn("No active player-owned hero tokens were found on this Scene.");
 
   runtime.resetting = true;
   try {
@@ -484,8 +512,8 @@ async function executeEnemyTurn(scene, combat, combatant, active) {
   const target = nearestToken(token, heroes);
   if (!target) return;
 
-  const attack = token.actor.items.get(enemyConfig.attackId);
-  if (!attack) throw new Error(`${token.name} no longer has its configured attack.`);
+  const attack = enemyConfig.attackId === "__basic-melee__" ? null : token.actor.items.get(enemyConfig.attackId);
+  if (enemyConfig.attackId !== "__basic-melee__" && !attack) throw new Error(`${token.name} no longer has its configured attack.`);
 
   const reach = getAttackReach(token.actor, attack);
   let distance = tokenDistanceSpaces(token, target);
@@ -496,7 +524,7 @@ async function executeEnemyTurn(scene, combat, combatant, active) {
   }
 
   if (distance <= reach + 0.35) {
-    await performAttack(token, target, attack, combat);
+    await performAttack(token, target, attack, combat, { basic: enemyConfig.attackId === "__basic-melee__" });
     await sleep(650);
   } else {
     await ChatMessage.create({
@@ -546,6 +574,14 @@ function tokenDistanceSpaces(a, b) {
 }
 
 function getAttackReach(actor, attack) {
+  if (!attack) return 1;
+  if (isMvrpg()) {
+    const range = attack.system?.range;
+    if (range?.reach === true) return 1;
+    const raw = Number.parseFloat(range?._value ?? range?.value);
+    return Number.isFinite(raw) && raw > 0 ? Math.max(1, raw) : 1;
+  }
+
   const candidates = [attack.system?.attackRange, attack.system?.reach, actor.system?.reach, 1];
   for (const candidate of candidates) {
     const value = Number.parseFloat(candidate);
@@ -555,7 +591,7 @@ function getAttackReach(actor, attack) {
 }
 
 async function moveTowardTarget(token, target, reach) {
-  const speed = Math.max(0, Number(token.actor?.system?.movement?.run?.value ?? 0));
+  const speed = Math.max(0, Number(token.actor?.system?.speed?.run ?? token.actor?.system?.movement?.run?.value ?? 0));
   if (!speed) return;
 
   const from = tokenCenter(token);
@@ -581,16 +617,120 @@ async function moveTowardTarget(token, target, reach) {
   await token.update({ x: snapped.x, y: snapped.y });
 }
 
-async function performAttack(attackerToken, targetToken, attack, combat) {
+async function performAttack(attackerToken, targetToken, attack, combat, { basic = false } = {}) {
   if (canvas.scene?.id === attackerToken.parent?.id) {
     canvas.tokens.setTargets([targetToken.id], { mode: "replace" });
   }
 
-  const roll = await attack.roll();
-  if (!roll) {
+  try {
+    if (isMvrpg()) {
+      return await performMvrpgAttack(attackerToken, targetToken, attack, combat, { basic });
+    }
+    return await performLegacyMarvelAttack(attackerToken, targetToken, attack, combat);
+  } finally {
     canvas.tokens.setTargets([], { mode: "replace" });
-    throw new Error(`${attack.name} did not produce a roll.`);
   }
+}
+
+function mvrpgAbilityDefense(actor, abilityKey) {
+  if (!abilityKey || abilityKey === "none") return 10;
+  const ability = actor?.system?.abilities?.[abilityKey] ?? {};
+  const derived = Number(ability.defense);
+  if (Number.isFinite(derived)) return derived;
+  return 10 + Number(ability.value ?? 0) + Number(ability.defenseBonus ?? 0);
+}
+
+async function performMvrpgAttack(attackerToken, targetToken, attack, combat, { basic = false } = {}) {
+  const actor = attackerToken.actor;
+  const targetActor = targetToken.actor;
+  const rollData = basic ? {
+    type: "combat",
+    ability: "melee",
+    against: "melee",
+    lifepoolTarget: "health",
+    bonus: 0,
+    edges: 0,
+    troubles: 0,
+  } : attack.system?.roll;
+
+  if (!rollData) throw new Error(`${attack?.name ?? "Attack"} does not contain MVRPG roll data.`);
+  const D616 = game.mvrpg?.D616;
+  if (!D616) throw new Error("The MVRPG D616 roll engine is unavailable.");
+
+  const abilityKey = rollData.ability || "melee";
+  const ability = actor.system?.abilities?.[abilityKey] ?? {};
+  const modifier = Number(ability.value ?? 0) + Number(rollData.bonus ?? 0);
+  const edges = Number(ability.edges ?? 0) + Number(rollData.edges ?? 0);
+  const troubles = Number(ability.troubles ?? 0) + Number(rollData.troubles ?? 0);
+  const against = rollData.against || abilityKey;
+  const tn = against === "none" ? 10 + Number(targetActor.system?.rank ?? 0) : mvrpgAbilityDefense(targetActor, against);
+  const lifepoolTarget = rollData.lifepoolTarget === "focus" ? "focus" : "health";
+  const focusCost = basic ? 0 : Number(attack.system?.cost ?? 0);
+
+  const roll = new D616("", {}, {
+    rollType: "combat",
+    ability: abilityKey,
+    against,
+    lifepoolTarget,
+    modifier,
+    edges,
+    troubles,
+    focusCost: 0,
+    actor,
+    item: basic ? null : attack,
+    tn,
+  });
+
+  // Use Foundry's base Roll evaluator so NPC automation never pauses for the
+  // MVRPG confirmation dialog. We handle the optional Focus cost below.
+  await Roll.prototype.evaluate.call(roll, {});
+  if (!roll?._evaluated) throw new Error("The automated D616 roll could not be evaluated.");
+
+  if (focusCost > 0) {
+    const currentFocus = Number(actor.system?.lifepool?.focus?.value ?? 0);
+    await actor.update({ "system.lifepool.focus.value": currentFocus - focusCost });
+  }
+
+  await roll.toMessage({
+    speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor }),
+    flavor: `Danger Room — ${basic ? "Basic Melee Attack" : attack.name}`,
+  });
+
+  const total = Number(roll.finalResults?.total ?? roll.total ?? 0);
+  const fantastic = Boolean(roll.fantasticResult || roll.ultimateFantasticResult);
+  const hit = Boolean(roll.isSuccess);
+  const attackName = basic ? "Basic Melee Attack" : attack.name;
+
+  if (!hit) {
+    await ChatMessage.create({
+      speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor }),
+      content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} misses ${esc(targetToken.name)} (${esc(attackName)}: ${total} vs. Defense ${tn}).`,
+    });
+    return;
+  }
+
+  const resource = targetActor.system?.lifepool?.[lifepoolTarget];
+  const reduction = Number(resource?.damageReduction ?? 0);
+  const calculated = typeof roll.calculateDamage === "function" ? roll.calculateDamage(reduction) : { total: 0 };
+  const amount = Math.max(0, Math.floor(Number(calculated.total ?? 0)));
+  const current = Number(resource?.value ?? 0);
+  const newValue = current - amount;
+  await targetActor.update({ [`system.lifepool.${lifepoolTarget}.value`]: newValue });
+
+  const targetCombatant = combat.combatants.find((entry) => entry.tokenId === targetToken.id);
+  if (lifepoolTarget === "health" && newValue <= 0 && targetCombatant && !targetCombatant.defeated) {
+    await targetCombatant.update({ defeated: true });
+  }
+
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor }),
+    content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} hits ${esc(targetToken.name)} with <strong>${esc(attackName)}</strong> for <strong>${amount}</strong> ${lifepoolTarget} damage${fantastic ? " (Fantastic result)" : ""}.`,
+  });
+}
+
+async function performLegacyMarvelAttack(attackerToken, targetToken, attack, combat) {
+  const roll = await attack.roll();
+  if (!roll) throw new Error(`${attack.name} did not produce a roll.`);
 
   const targetActor = targetToken.actor;
   const defenseAbility = attack.system?.attackTarget || attack.system?.ability || "mle";
@@ -603,11 +743,10 @@ async function performAttack(attackerToken, targetToken, attack, combat) {
       speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor: attackerToken.actor }),
       content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} misses ${esc(targetToken.name)} (${esc(attack.name)}: ${roll.total} vs. Defense ${defense}).`,
     });
-    canvas.tokens.setTargets([], { mode: "replace" });
     return;
   }
 
-  const damage = calculateDamage(attackerToken.actor, targetActor, attack, roll);
+  const damage = calculateLegacyDamage(attackerToken.actor, targetActor, attack, roll);
   const damageType = attack.system?.damageType === "focus" ? "focus" : "health";
   const resource = targetActor.system?.[damageType];
   const current = Number(resource?.value ?? 0);
@@ -623,11 +762,9 @@ async function performAttack(attackerToken, targetToken, attack, combat) {
     speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor: attackerToken.actor }),
     content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} hits ${esc(targetToken.name)} with <strong>${esc(attack.name)}</strong> for <strong>${damage.amount}</strong> ${damageType} damage${fantastic ? " (Fantastic success)" : ""}.`,
   });
-
-  canvas.tokens.setTargets([], { mode: "replace" });
 }
 
-function calculateDamage(attacker, target, attack, roll) {
+function calculateLegacyDamage(attacker, target, attack, roll) {
   const abilityKey = attack.system?.ability || "mle";
   const ability = attacker.system?.abilities?.[abilityKey] ?? {};
   const multiplier = Number(ability.damageMultiplier ?? attacker.system?.attributes?.rank?.value ?? 0);
@@ -641,13 +778,7 @@ function calculateDamage(attacker, target, attack, roll) {
   let amount = Math.max(0, marvelValue * effectiveMultiplier + abilityValue);
   if (roll.isFantastic) amount *= 2;
 
-  return {
-    amount: Math.floor(amount),
-    marvelValue,
-    multiplier,
-    reduction,
-    abilityValue,
-  };
+  return { amount: Math.floor(amount), marvelValue, multiplier, reduction, abilityValue };
 }
 
 async function checkOutcome(scene) {
@@ -734,7 +865,7 @@ async function restoreHeroes(scene, heroIds) {
     const token = scene.tokens.get(id);
     if (!token?.actor) continue;
     const max = healthMax(token);
-    if (max > 0) await token.actor.update({ "system.health.value": max });
+    if (max > 0) await token.actor.update({ [healthPath(token.actor)]: max });
   }
 }
 
@@ -747,8 +878,8 @@ async function resetEnemyTokens(scene, config, { hide = true } = {}) {
       const updates = {};
       const hpMax = healthMax(token);
       const fpMax = focusMax(token);
-      if (hpMax > 0) updates["system.health.value"] = hpMax;
-      if (fpMax > 0) updates["system.focus.value"] = fpMax;
+      if (hpMax > 0) updates[healthPath(token.actor)] = hpMax;
+      if (fpMax > 0) updates[focusPath(token.actor)] = fpMax;
       if (Object.keys(updates).length) await token.actor.update(updates);
     }
 
