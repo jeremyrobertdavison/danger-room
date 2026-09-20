@@ -28,7 +28,7 @@ const DEFAULT_SCORE = Object.freeze({
 });
 
 Hooks.once("init", () => {
-  console.log("Danger Room | Initializing v1.0.2");
+  console.log("Danger Room | Initializing v1.0.4");
 });
 
 Hooks.once("ready", () => {
@@ -111,6 +111,14 @@ Hooks.on("updateCombat", (combat) => {
 Hooks.on("updateActor", () => scheduleOutcomeCheck());
 Hooks.on("updateToken", () => scheduleOutcomeCheck());
 
+// Player attack rolls are created on the player's client, but the resulting
+// ChatMessage is synchronized to the GM. The active GM resolves Danger Room
+// damage so players never need permission to edit training-enemy Actors.
+Hooks.on("createChatMessage", (message) => {
+  if (!isAutomationGM() || runtime.resetting) return;
+  window.setTimeout(() => maybeApplyPlayerAttackDamage(message), 250);
+});
+
 function isAutomationGM() {
   if (!game.user?.isGM) return false;
   if (typeof game.user.isActiveGM === "boolean") return game.user.isActiveGM;
@@ -183,22 +191,80 @@ function isConscious(tokenDoc) {
   return healthValue(tokenDoc) > 0;
 }
 
-function activePlayerOwners(actor) {
-  if (!actor) return [];
-  const ownerLevel = CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? 3;
-  return game.users.filter((user) =>
-    user.active &&
-    !user.isGM &&
-    actor.testUserPermission(user, ownerLevel)
-  );
+function assignedCharacterId(user) {
+  const character = user?.character;
+  if (!character) return null;
+  if (typeof character === "string") return character;
+  return character.id ?? character._id ?? null;
+}
+
+function userOwnsTokenActor(user, tokenDoc) {
+  if (!user?.active || user.isGM || !tokenDoc?.actor) return false;
+
+  const actor = tokenDoc.actor;
+  const actorIds = new Set([actor.id, actor._id, tokenDoc.actorId].filter(Boolean));
+  const assignedId = assignedCharacterId(user);
+
+  // A user's selected Character is the strongest signal that this token is their hero.
+  // Checking tokenDoc.actorId also handles synthetic/unlinked token Actors.
+  if (assignedId && actorIds.has(assignedId)) return true;
+
+  // Foundry v13 expects the named ownership level here rather than the numeric constant.
+  try {
+    if (actor.testUserPermission?.(user, "OWNER")) return true;
+  } catch (error) {
+    console.debug("Danger Room | Actor permission test failed; trying fallbacks", error);
+  }
+
+  const ownerLevel = Number(CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? 3);
+
+  try {
+    const level = Number(actor.getUserLevel?.(user));
+    if (Number.isFinite(level) && level >= ownerLevel) return true;
+  } catch (error) {
+    console.debug("Danger Room | Actor ownership-level lookup failed", error);
+  }
+
+  const ownership = actor.ownership ?? actor._source?.ownership ?? {};
+  const level = Number(ownership[user.id] ?? ownership.default ?? 0);
+  return Number.isFinite(level) && level >= ownerLevel;
+}
+
+function activePlayerOwners(tokenDoc) {
+  if (!tokenDoc?.actor) return [];
+  return game.users.filter((user) => userOwnsTokenActor(user, tokenDoc));
 }
 
 function participantTokens(scene, enemyIds = []) {
   const enemySet = new Set(enemyIds);
   return scene.tokens.filter((token) => {
     if (!token.actor || enemySet.has(token.id)) return false;
-    return activePlayerOwners(token.actor).length > 0;
+    return activePlayerOwners(token).length > 0;
   });
+}
+
+function participantDiagnostics(scene, enemyIds = []) {
+  const enemySet = new Set(enemyIds);
+  return {
+    activePlayers: game.users
+      .filter((user) => user.active && !user.isGM)
+      .map((user) => ({
+        id: user.id,
+        name: user.name,
+        characterId: assignedCharacterId(user),
+        characterName: typeof user.character === "object" ? user.character?.name ?? null : null,
+      })),
+    sceneTokens: scene.tokens
+      .filter((token) => !enemySet.has(token.id))
+      .map((token) => ({
+        id: token.id,
+        name: token.name,
+        actorId: token.actorId,
+        actorName: token.actor?.name ?? null,
+        actorType: token.actor?.type ?? null,
+        activeOwners: activePlayerOwners(token).map((user) => user.name),
+      })),
+  };
 }
 
 function isMvrpg() {
@@ -385,8 +451,14 @@ async function startSimulation(scene) {
     if (!attack) return ui.notifications.error(`${token?.name ?? entry.name} is missing its configured attack. Open Danger Room: Configure.`);
   }
 
-  const heroes = participantTokens(scene, enemies.map((token) => token.id));
-  if (!heroes.length) return ui.notifications.warn("No active player-owned hero tokens were found on this Scene.");
+  const enemyIds = enemies.map((token) => token.id);
+  const heroes = participantTokens(scene, enemyIds);
+  if (!heroes.length) {
+    const diagnostics = participantDiagnostics(scene, enemyIds);
+    console.warn("Danger Room | No hero participants detected", diagnostics);
+    const playerNames = diagnostics.activePlayers.map((player) => player.name).join(", ") || "none";
+    return ui.notifications.warn(`No player hero tokens were detected on this Scene. Active non-GM users: ${playerNames}. See the browser console for Danger Room participant diagnostics.`);
+  }
 
   runtime.resetting = true;
   try {
@@ -694,6 +766,7 @@ async function performMvrpgAttack(attackerToken, targetToken, attack, combat, { 
   await roll.toMessage({
     speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor }),
     flavor: `Danger Room — ${basic ? "Basic Melee Attack" : attack.name}`,
+    flags: { [MODULE_ID]: { automatedNpcAttack: true } },
   });
 
   const total = Number(roll.finalResults?.total ?? roll.total ?? 0);
@@ -709,23 +782,267 @@ async function performMvrpgAttack(attackerToken, targetToken, attack, combat, { 
     return;
   }
 
-  const resource = targetActor.system?.lifepool?.[lifepoolTarget];
-  const reduction = Number(resource?.damageReduction ?? 0);
-  const calculated = typeof roll.calculateDamage === "function" ? roll.calculateDamage(reduction) : { total: 0 };
-  const amount = Math.max(0, Math.floor(Number(calculated.total ?? 0)));
-  const current = Number(resource?.value ?? 0);
-  const newValue = current - amount;
-  await targetActor.update({ [`system.lifepool.${lifepoolTarget}.value`]: newValue });
-
-  const targetCombatant = combat.combatants.find((entry) => entry.tokenId === targetToken.id);
-  if (lifepoolTarget === "health" && newValue <= 0 && targetCombatant && !targetCombatant.defeated) {
-    await targetCombatant.update({ defeated: true });
-  }
+  const damage = await applyMvrpgDamage({
+    roll,
+    attackerToken,
+    targetToken,
+    combat,
+    lifepoolTarget,
+    sourceName: attackName,
+  });
 
   await ChatMessage.create({
     speaker: ChatMessage.getSpeaker({ token: attackerToken.object, actor }),
-    content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} hits ${esc(targetToken.name)} with <strong>${esc(attackName)}</strong> for <strong>${amount}</strong> ${lifepoolTarget} damage${fantastic ? " (Fantastic result)" : ""}.`,
+    flags: { [MODULE_ID]: { automatedResult: true } },
+    content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} hits ${esc(targetToken.name)} with <strong>${esc(attackName)}</strong> for <strong>${damage.amount}</strong> ${lifepoolTarget} damage${fantastic ? " (Fantastic result)" : ""}. ${esc(targetToken.name)}: ${damage.before} → ${damage.after}.`,
   });
+}
+
+
+function finiteNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return 0;
+}
+
+function mvrpgRollAbility(roll) {
+  return roll?.ability ?? roll?.options?.ability ?? "melee";
+}
+
+function mvrpgRollLifepoolTarget(roll) {
+  const target = roll?.lifepoolTarget ?? roll?.options?.lifepoolTarget ?? "health";
+  return target === "focus" ? "focus" : target === "none" ? "none" : "health";
+}
+
+function mvrpgMiddleDieValue(roll) {
+  try {
+    const active = roll?.activeResultDie?.("dieM");
+    const total = Number(active?.total);
+    if (Number.isFinite(total)) return total;
+  } catch (error) {
+    console.debug("Danger Room | Could not read active Marvel die", error);
+  }
+
+  const die = roll?.dice?.[1];
+  const dieTotal = Number(die?.total);
+  if (Number.isFinite(dieTotal)) return dieTotal;
+
+  const termTotal = Number(roll?.terms?.[2]?.total ?? roll?.terms?.[1]?.total);
+  if (Number.isFinite(termTotal)) return termTotal;
+  return 0;
+}
+
+function mvrpgFantasticResult(roll) {
+  if (typeof roll?.fantasticResult === "boolean") return roll.fantasticResult;
+  try {
+    return Boolean(roll?.activeResultDie?.("dieM")?.fantasticResult);
+  } catch (error) {
+    return false;
+  }
+}
+
+function calculateMvrpgDamageForTarget(roll, attackerActor, targetActor, lifepoolTarget = "health") {
+  const abilityKey = mvrpgRollAbility(roll);
+  const ability = attackerActor?.system?.abilities?.[abilityKey] ?? {};
+  const rank = finiteNumber(attackerActor?.system?.rank);
+
+  // The mvrpg system exposes prepared damageMultiplier/damageModifier values.
+  // Exported actor data stores the corresponding Bonus fields instead, so the
+  // fallbacks reproduce the system's prepared values if those getters are not
+  // available on a synthetic Token Actor.
+  const preparedMultiplier = Number(ability.damageMultiplier);
+  const multiplier = Number.isFinite(preparedMultiplier)
+    ? preparedMultiplier
+    : rank + finiteNumber(ability.damageMultiplierBonus);
+
+  const preparedModifier = Number(ability.damageModifier);
+  const modifier = Number.isFinite(preparedModifier)
+    ? preparedModifier
+    : finiteNumber(ability.value) + finiteNumber(ability.damageModifierBonus);
+
+  const resource = targetActor?.system?.lifepool?.[lifepoolTarget] ?? {};
+  const resistance = Math.abs(finiteNumber(resource.damageReduction));
+  const finalMultiplier = multiplier - resistance;
+  const dieM = mvrpgMiddleDieValue(roll);
+  let amount = finalMultiplier < 1 ? 0 : dieM * finalMultiplier + modifier;
+  if (mvrpgFantasticResult(roll)) amount *= 2;
+
+  return {
+    amount: Math.max(0, Math.floor(finiteNumber(amount))),
+    dieM,
+    multiplier,
+    modifier,
+    resistance,
+    finalMultiplier,
+  };
+}
+
+async function applyMvrpgDamage({ roll, attackerToken, targetToken, combat, lifepoolTarget, sourceName = "Attack" }) {
+  const attackerActor = attackerToken?.actor;
+  const targetActor = targetToken?.actor;
+  if (!attackerActor || !targetActor) throw new Error("Danger Room could not resolve the attacker or target Actor.");
+
+  const pool = lifepoolTarget === "focus" ? "focus" : "health";
+  const resource = targetActor.system?.lifepool?.[pool];
+  if (!resource) throw new Error(`${targetToken.name} does not have an MVRPG ${pool} pool.`);
+
+  const damage = calculateMvrpgDamageForTarget(roll, attackerActor, targetActor, pool);
+  const before = finiteNumber(resource.value);
+  const after = Math.max(0, before - damage.amount);
+  const path = `system.lifepool.${pool}.value`;
+
+  await targetActor.update({ [path]: after });
+
+  // Re-read from the Token Actor after the update. This is important for
+  // unlinked/synthetic training tokens, whose data lives in the token delta.
+  const confirmed = finiteNumber(targetToken.actor?.system?.lifepool?.[pool]?.value);
+  if (confirmed !== after) {
+    console.warn("Danger Room | Lifepool update did not confirm expected value", {
+      target: targetToken.name,
+      pool,
+      before,
+      expected: after,
+      confirmed,
+      damage,
+      sourceName,
+    });
+  }
+
+  const targetCombatant = combat?.combatants?.find((entry) => entry.tokenId === targetToken.id);
+  if (pool === "health" && after <= 0 && targetCombatant && !targetCombatant.defeated) {
+    await targetCombatant.update({ defeated: true });
+  }
+
+  scheduleOutcomeCheck();
+  return { ...damage, before, after: confirmed === after ? confirmed : after };
+}
+
+function messageAuthorUser(message) {
+  if (message?.author) return message.author;
+  const userId = typeof message?.user === "string" ? message.user : message?.user?.id;
+  return userId ? game.users.get(userId) : null;
+}
+
+function heroTokenForMessage(scene, active, message, user = null) {
+  const speakerTokenId = message?.speaker?.token;
+  if (speakerTokenId && active.heroTokenIds.includes(speakerTokenId)) return scene.tokens.get(speakerTokenId);
+
+  const speakerActorId = message?.speaker?.actor;
+  const assignedId = assignedCharacterId(user);
+  return active.heroTokenIds
+    .map((id) => scene.tokens.get(id))
+    .find((token) => {
+      if (!token) return false;
+      const actorIds = new Set([token.actorId, token.actor?.id, token.actor?._id].filter(Boolean));
+      return (speakerActorId && actorIds.has(speakerActorId)) || (assignedId && actorIds.has(assignedId));
+    }) ?? null;
+}
+
+function targetedTrainingEnemies(scene, active, user) {
+  const enemyIds = new Set(active.enemyTokenIds);
+  const found = new Map();
+
+  // Foundry maintains target state on User and Token placeables. Check both so
+  // this works reliably when the attack was rolled from another connected client.
+  for (const placeable of user?.targets ?? []) {
+    const doc = placeable?.document ?? placeable;
+    if (doc?.id && enemyIds.has(doc.id) && isConscious(doc)) found.set(doc.id, doc);
+  }
+
+  if (canvas.scene?.id === scene.id) {
+    for (const id of active.enemyTokenIds) {
+      const placeable = canvas.tokens.get(id);
+      if (placeable?.targeted?.has?.(user) && isConscious(placeable.document)) {
+        found.set(id, placeable.document);
+      }
+    }
+  }
+
+  return Array.from(found.values());
+}
+
+async function maybeApplyPlayerAttackDamage(message) {
+  if (!isAutomationGM() || runtime.resetting) return;
+  if (!isMvrpg()) return;
+  if (!message?.rolls?.length) return;
+  if (message.getFlag?.(MODULE_ID, "automatedNpcAttack") || message.getFlag?.(MODULE_ID, "automatedResult")) return;
+
+  // mvrpg damage cards contain messageData; the original attack card does not.
+  // Skipping damage cards prevents a player from double-applying damage by
+  // clicking the system's native damage-calculation icon after Danger Room has
+  // already resolved the attack.
+  if (message.getFlag?.("mvrpg", "messageData")) return;
+
+  const sceneId = message?.speaker?.scene ?? canvas.scene?.id;
+  const scene = game.scenes.get(sceneId) ?? canvas.scene;
+  const active = scene?.getFlag(MODULE_ID, FLAG_ACTIVE);
+  if (!scene || !active) return;
+
+  const user = messageAuthorUser(message);
+  const attackerToken = heroTokenForMessage(scene, active, message, user);
+  if (!attackerToken?.actor) return;
+
+  const roll = message.rolls[0];
+  const rollType = roll?.type ?? roll?.options?.rollType;
+  const lifepoolTarget = mvrpgRollLifepoolTarget(roll);
+  if (rollType !== "combat" || lifepoolTarget === "none") return;
+
+  const success = typeof roll?.isSuccess === "boolean"
+    ? roll.isSuccess
+    : Boolean(roll?.ultimateFantasticResult) || finiteNumber(roll?.finalResults?.total, roll?.total) >= finiteNumber(roll?.tn, roll?.options?.tn, 10);
+  if (!success) return;
+
+  let targets = targetedTrainingEnemies(scene, active, user);
+
+  // Convenience for the simplest V1 encounter: if only one conscious training
+  // enemy remains, it is unambiguous even if the player forgot to target it.
+  if (targets.length === 0) {
+    const consciousEnemies = active.enemyTokenIds
+      .map((id) => scene.tokens.get(id))
+      .filter((token) => token && isConscious(token));
+    if (consciousEnemies.length === 1) targets = consciousEnemies;
+  }
+
+  if (targets.length !== 1) {
+    await ChatMessage.create({
+      speaker: { alias: "Danger Room" },
+      flags: { [MODULE_ID]: { automatedResult: true } },
+      content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} scored a successful damaging attack, but ${targets.length ? "more than one training enemy is targeted" : "no single training enemy is targeted"}. Target exactly one training opponent and roll the attack again.`,
+    });
+    return;
+  }
+
+  const targetToken = targets[0];
+  const combat = game.combats.get(active.combatId) ?? game.combat;
+  const sourceName = roll?.item?.name ?? roll?.options?.item?.name ?? "Attack";
+
+  try {
+    const damage = await applyMvrpgDamage({
+      roll,
+      attackerToken,
+      targetToken,
+      combat,
+      lifepoolTarget,
+      sourceName,
+    });
+
+    await message.setFlag?.(MODULE_ID, "damageApplied", {
+      targetTokenId: targetToken.id,
+      amount: damage.amount,
+      lifepoolTarget,
+    });
+
+    await ChatMessage.create({
+      speaker: { alias: "Danger Room" },
+      flags: { [MODULE_ID]: { automatedResult: true } },
+      content: `<strong>Danger Room:</strong> ${esc(attackerToken.name)} deals <strong>${damage.amount}</strong> ${lifepoolTarget} damage to <strong>${esc(targetToken.name)}</strong>. ${esc(targetToken.name)}: ${damage.before} → ${damage.after}.`,
+    });
+  } catch (error) {
+    console.error("Danger Room | Failed to apply player damage", error, { message, attackerToken, targetToken });
+    ui.notifications.error(`Danger Room could not apply player damage: ${error.message}`);
+  }
 }
 
 async function performLegacyMarvelAttack(attackerToken, targetToken, attack, combat) {

@@ -6,7 +6,7 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 
 > This is a fan-made module. It is not affiliated with or endorsed by Marvel Entertainment, The Walt Disney Company, Foundry Gaming LLC, or the maintainers of the unofficial Marvel Multiverse Foundry system. No copyrighted game rules or sourcebook content are distributed with this module.
 
-## Version 1.0.2 Features
+## Version 1.0.4 Features
 
 - Danger Room is enabled **per Scene**.
 - GM manually starts and stops each simulation.
@@ -19,6 +19,8 @@ Version 1 is intentionally simple: the GM prepares a group of training enemies, 
 - Enemies attack when they reach their configured close-attack reach.
 - Enemy attacks use the active Marvel-compatible system's D616 mechanics; `mvrpg` v3.x data paths are supported.
 - Danger Room automatically checks the attack against the target defense and applies Health or Focus damage.
+- Successful player combat attacks automatically damage a targeted Danger Room enemy while a simulation is active.
+- Players should target exactly one training enemy before rolling an attack; if only one conscious enemy remains, Danger Room can infer that target.
 - Enemy turns end automatically and initiative proceeds normally.
 - If every participating hero reaches 0 Health or below, the simulation ends and heroes are restored to full Health.
 - If every training enemy is defeated, the simulation ends in victory.
@@ -41,7 +43,7 @@ In Foundry's **Add-on Modules** setup screen, choose **Install Module** and use:
 
 ### Manual Installation
 
-Download `danger-room-v1.0.2.zip` from the GitHub Releases page and extract it into:
+Download `danger-room-v1.0.4.zip` from the GitHub Releases page and extract it into:
 
 `Data/modules/danger-room/`
 
@@ -62,6 +64,14 @@ Then restart Foundry and enable **Danger Room** in the desired world.
 11. Click **Danger Room: Start Simulation**.
 
 Danger Room reveals the training enemies, resets them, creates combatants, rolls initiative for everyone, and begins combat.
+
+## Player Attacks in Version 1
+
+During an active Danger Room simulation, players attack normally from their MVRPG character sheet. Before rolling a damaging combat attack, target the training-enemy token in Foundry. When the attack succeeds, the active GM client automatically calculates the damage using the MVRPG Marvel die, the attacker's prepared damage multiplier/modifier, the target's damage reduction, and Fantastic-result doubling, then subtracts the result from the target's Health or Focus.
+
+Players do not need ownership of the training-enemy Actor. When only one conscious training enemy remains, Danger Room can infer that target if the player forgot to target it. With multiple enemies, target exactly one enemy before rolling.
+
+The MVRPG system's native damage icon may still be used to display its damage card, but Danger Room ignores that secondary damage-card message so it does not apply the same hit twice.
 
 ## Enemy AI in Version 1
 

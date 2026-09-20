@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.4
+
+- Fixed MVRPG enemy hits not reducing hero Health/Focus by moving Danger Room damage resolution onto the prepared attacker/target Actor data used by the installed `mvrpg` system.
+- Added automatic damage application for successful player combat rolls against Danger Room training enemies while a simulation is active.
+- Player damage is resolved by the active GM client, so players do not need ownership permission on training-enemy Actors.
+- Uses the player's targeted training enemy; when exactly one conscious training enemy remains, Danger Room can resolve it automatically even if the player forgot to target.
+- Added synthetic-token-safe lifepool verification and combatant defeat handling.
+- Prevented the MVRPG native damage-card message from causing duplicate Danger Room damage application.
+
+## 1.0.3
+
+- Fixed player hero detection in Foundry VTT v13 by using the named `OWNER` permission level expected by `Document#testUserPermission`.
+- Added assigned-character matching so an active user's selected Character token is recognized even when a synthetic Token Actor complicates normal ownership checks.
+- Added ownership-level fallbacks for synthetic/unlinked Actors.
+- Added console diagnostics when no hero participants can be detected.
+
 ## 1.0.2
 
 - Fixed Scene Controls not appearing in worlds using the `mvrpg` system ID.
